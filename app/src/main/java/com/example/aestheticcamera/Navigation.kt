@@ -46,7 +46,8 @@ fun MainNavigation() {
           MainScreen(
             onNavigateToCamera = { backStack.add(Camera()) },
             onNavigateToEditor = { uri -> backStack.add(Editor(uri)) },
-            onNavigateToLessons = { backStack.add(Lessons) }
+            onNavigateToLessons = { backStack.add(Lessons) },
+            onNavigateToCollage = { backStack.add(Collage) }
           )
         }
         entry<Camera> { cameraKey ->
@@ -70,6 +71,11 @@ fun MainNavigation() {
         entry<Lessons> {
           LessonsScreen(
             onSelectGuideAndShoot = { guide -> backStack.add(Camera(initialGuide = guide)) },
+            onNavigateBack = { backStack.removeLastOrNull() }
+          )
+        }
+        entry<Collage> {
+          com.example.aestheticcamera.ui.collage.CollageMakerScreen(
             onNavigateBack = { backStack.removeLastOrNull() }
           )
         }

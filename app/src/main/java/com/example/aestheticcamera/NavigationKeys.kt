@@ -18,3 +18,6 @@ data class Editor(val imageUriString: String) : NavKey
 
 @Serializable
 data object Lessons : NavKey
+
+@Serializable
+data object Collage : NavKey

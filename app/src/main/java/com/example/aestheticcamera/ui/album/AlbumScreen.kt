@@ -47,25 +47,30 @@ fun AlbumScreen(
 ) {
     val context = LocalContext.current
     
-    // Identificar a permissão de armazenamento adequada para a versão do SDK do Android
-    val storagePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        android.Manifest.permission.READ_MEDIA_IMAGES
-    } else {
-        android.Manifest.permission.READ_EXTERNAL_STORAGE
+    // Identificar as permissões de armazenamento adequadas para a versão do SDK do Android
+    val permissionsToRequest = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(
+                android.Manifest.permission.READ_MEDIA_IMAGES,
+                android.Manifest.permission.READ_MEDIA_VIDEO
+            )
+        } else {
+            arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
     }
 
     var hasPermission by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, storagePermission) == PackageManager.PERMISSION_GRANTED
+            permissionsToRequest.any { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
         )
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        hasPermission = isGranted
-        if (!isGranted) {
-            Toast.makeText(context, "Permissão de leitura negada", Toast.LENGTH_SHORT).show()
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        hasPermission = results.values.any { it }
+        if (!hasPermission) {
+            Toast.makeText(context, "Permiss\u00E3o de leitura negada", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -75,7 +80,7 @@ fun AlbumScreen(
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.loadPhotos(context)
-            Toast.makeText(context, "Foto excluída com sucesso", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Foto exclu\u00EDda com sucesso", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -84,6 +89,8 @@ fun AlbumScreen(
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
             viewModel.loadPhotos(context)
+        } else {
+            permissionLauncher.launch(permissionsToRequest)
         }
     }
 
@@ -154,7 +161,7 @@ fun AlbumScreen(
                 )
                 Spacer(modifier = Modifier.height(24.dp))
                 Button(
-                    onClick = { permissionLauncher.launch(storagePermission) },
+                    onClick = { permissionLauncher.launch(permissionsToRequest) },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFFFFD54F),
                         contentColor = Color.Black
@@ -236,6 +243,27 @@ fun AlbumScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 items(state.photos) { uri ->
+                                    val isVideo = remember(uri) {
+                                        val mimeType = context.contentResolver.getType(uri)
+                                        mimeType?.startsWith("video/") == true || uri.toString().contains("video")
+                                    }
+
+                                    val imageModel = remember(uri, isVideo) {
+                                        if (isVideo) {
+                                            try {
+                                                val retriever = android.media.MediaMetadataRetriever()
+                                                retriever.setDataSource(context, uri)
+                                                val bmp = retriever.getFrameAtTime(500_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                                                retriever.release()
+                                                bmp ?: uri
+                                            } catch (e: Exception) {
+                                                uri
+                                            }
+                                        } else {
+                                            uri
+                                        }
+                                    }
+
                                     Box(
                                         modifier = Modifier
                                             .aspectRatio(1f)
@@ -247,11 +275,25 @@ fun AlbumScreen(
                                             )
                                     ) {
                                         AsyncImage(
-                                            model = uri,
-                                            contentDescription = "Imagem do Álbum",
+                                            model = imageModel,
+                                            contentDescription = "Imagem ou Vídeo do Álbum",
                                             modifier = Modifier.fillMaxSize(),
                                             contentScale = ContentScale.Crop
                                         )
+
+                                        if (isVideo) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomStart)
+                                                    .padding(6.dp)
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(Color.Black.copy(alpha = 0.65f))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text("▶", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
                                         
                                         // Botão Flutuante de Lixeira (Overlay)
                                         Box(

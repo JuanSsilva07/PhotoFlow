@@ -10,29 +10,20 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme = darkColorScheme(primary = Purple80, secondary = PurpleGrey80, tertiary = Pink80)
-
-private val LightColorScheme =
-  lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40,
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
-  )
+private val DarkColorScheme = darkColorScheme(
+    primary = androidx.compose.ui.graphics.Color(0xFFFFD54F),
+    secondary = androidx.compose.ui.graphics.Color(0xFFFFB300),
+    tertiary = androidx.compose.ui.graphics.Color(0xFFFF8C00),
+    background = androidx.compose.ui.graphics.Color(0xFF0A0A0C),
+    surface = androidx.compose.ui.graphics.Color(0xFF161618),
+    onPrimary = androidx.compose.ui.graphics.Color.Black,
+    onBackground = androidx.compose.ui.graphics.Color.White,
+    onSurface = androidx.compose.ui.graphics.Color.White
+)
 
 @Composable
 fun AestheticCameraTheme(
   darkTheme: Boolean = isSystemInDarkTheme(),
-  // Dynamic color is available on Android 12+
   dynamicColor: Boolean = true,
   content: @Composable () -> Unit,
 ) {
@@ -40,10 +31,12 @@ fun AestheticCameraTheme(
     when {
       dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
         val context = LocalContext.current
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        dynamicDarkColorScheme(context).copy(
+            primary = androidx.compose.ui.graphics.Color(0xFFFFD54F),
+            onPrimary = androidx.compose.ui.graphics.Color.Black
+        )
       }
-      darkTheme -> DarkColorScheme
-      else -> LightColorScheme
+      else -> DarkColorScheme
     }
 
   MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)

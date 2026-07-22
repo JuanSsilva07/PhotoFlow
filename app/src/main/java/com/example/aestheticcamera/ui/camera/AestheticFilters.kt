@@ -18,7 +18,8 @@ enum class FilterType(val displayName: String) {
     GOLDEN("Golden Hour"),
     CYBERPUNK("Cyberpunk"),
     POLAROID("Polaroid Retro"),
-    PASTEL("Pastel Dream")
+    PASTEL("Pastel Dream"),
+    TUNGSTEN("Tungst\u00EAnio 3200K")
 }
 
 object AestheticFilters {
@@ -111,6 +112,14 @@ object AestheticFilters {
         0f, 0f, 0f, 1f, 0f
     )
 
+    // 12. Tungstênio 3200K (Tons azuis frios de iluminação tungstênio)
+    val TungstenMatrix = floatArrayOf(
+        0.75f, 0.05f, 0.00f, 0f, -15f,
+        0.05f, 0.85f, 0.05f, 0f, 0f,
+        0.05f, 0.15f, 1.25f, 0f, 25f,
+        0f, 0f, 0f, 1f, 0f
+    )
+
     val IdentityMatrix = floatArrayOf(
         1f, 0f, 0f, 0f, 0f,
         0f, 1f, 0f, 0f, 0f,
@@ -132,6 +141,7 @@ object AestheticFilters {
             FilterType.CYBERPUNK -> CyberpunkMatrix
             FilterType.POLAROID -> PolaroidMatrix
             FilterType.PASTEL -> PastelMatrix
+            FilterType.TUNGSTEN -> TungstenMatrix
         }
     }
 
@@ -151,5 +161,20 @@ object AestheticFilters {
         val colorMatrix = android.graphics.ColorMatrix(matrix)
         val filterEffect = ColorMatrixColorFilter(colorMatrix)
         return RenderEffect.createColorFilterEffect(filterEffect)
+    }
+
+    fun get4x4ColumnMajorMatrix(filter: FilterType, intensity: Float): FloatArray {
+        val matrix5 = getInterpolatedMatrix(filter, intensity)
+        // matrix5 is a 20-element array representing a 4x5 row-major matrix:
+        // Row 0: 0, 1, 2, 3, 4
+        // Row 1: 5, 6, 7, 8, 9
+        // Row 2: 10, 11, 12, 13, 14
+        // Row 3: 15, 16, 17, 18, 19
+        return floatArrayOf(
+            matrix5[0], matrix5[5], matrix5[10], matrix5[15],  // Column 0
+            matrix5[1], matrix5[6], matrix5[11], matrix5[16],  // Column 1
+            matrix5[2], matrix5[7], matrix5[12], matrix5[17],  // Column 2
+            matrix5[4] / 255f, matrix5[9] / 255f, matrix5[14] / 255f, matrix5[18] // Column 3 (Translation)
+        )
     }
 }

@@ -33,6 +33,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.aestheticcamera.R
 import com.example.aestheticcamera.theme.AestheticCameraTheme
+import com.example.aestheticcamera.ui.components.GlassCard
+import com.example.aestheticcamera.ui.components.GlassPillBar
+import com.example.aestheticcamera.ui.components.SpringButton
 import com.example.aestheticcamera.ui.album.AlbumScreen
 
 @Composable
@@ -40,6 +43,7 @@ fun MainScreen(
     onNavigateToCamera: () -> Unit,
     onNavigateToEditor: (String) -> Unit,
     onNavigateToLessons: () -> Unit,
+    onNavigateToCollage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) } // 0: Início, 2: Álbum (1: Câmera abre tela cheia)
@@ -87,21 +91,34 @@ fun MainScreen(
                 
                 NavigationBarItem(
                     selected = false,
-                    onClick = onNavigateToCamera,
+                    onClick = { },
                     icon = {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Color(0xFFFFD54F)),
-                            contentAlignment = Alignment.Center
+                        SpringButton(
+                            onClick = onNavigateToCamera,
+                            shape = RoundedCornerShape(16.dp)
                         ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_camera),
-                                contentDescription = "Câmera",
-                                tint = Color.Black,
-                                modifier = Modifier.size(24.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            colors = listOf(
+                                                Color(0xFFFFD54F),
+                                                Color(0xFFFFB300)
+                                            )
+                                        )
+                                    )
+                                    .border(0.5.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_camera),
+                                    contentDescription = "Câmera",
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
                     },
                     colors = NavigationBarItemDefaults.colors(
@@ -140,7 +157,8 @@ fun MainScreen(
                 0 -> HomeTabContent(
                     onNavigateToCamera = onNavigateToCamera,
                     onNavigateToLessons = onNavigateToLessons,
-                    onOpenGallery = { galleryLauncher.launch("image/*") }
+                    onNavigateToCollage = onNavigateToCollage,
+                    onOpenGallery = { galleryLauncher.launch("*/*") }
                 )
                 2 -> AlbumScreen(
                     onNavigateToEditor = onNavigateToEditor,
@@ -155,6 +173,7 @@ fun MainScreen(
 fun HomeTabContent(
     onNavigateToCamera: () -> Unit,
     onNavigateToLessons: () -> Unit,
+    onNavigateToCollage: () -> Unit,
     onOpenGallery: () -> Unit
 ) {
     Column(
@@ -308,6 +327,44 @@ fun HomeTabContent(
                 }
             }
 
+            // Card Criador de Colagens
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onNavigateToCollage() },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+                border = BorderStroke(1.dp, Color(0xFFFFD54F).copy(alpha = 0.4f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "🎞️ Criador de Colagens",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Crie montagens e tiras de filme 35mm com suas fotos favoritas.",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
+                        )
+                    }
+                    Text(
+                        text = "✨",
+                        fontSize = 24.sp,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
+            }
+
             // Duas Colunas para Ações Secundárias
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -427,7 +484,8 @@ fun MainScreenPreview() {
         MainScreen(
             onNavigateToCamera = {},
             onNavigateToEditor = {},
-            onNavigateToLessons = {}
+            onNavigateToLessons = {},
+            onNavigateToCollage = {}
         )
     }
 }
