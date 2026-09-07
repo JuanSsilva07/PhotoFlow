@@ -18,6 +18,7 @@ import com.example.aestheticcamera.ui.editor.EditorScreen
 import com.example.aestheticcamera.ui.lessons.LessonsScreen
 import com.example.aestheticcamera.ui.main.MainScreen
 import com.example.aestheticcamera.ui.onboarding.OnboardingScreen
+import com.example.aestheticcamera.ui.collage.CollageMakerScreen
 
 @Composable
 fun MainNavigation() {
@@ -75,7 +76,7 @@ fun MainNavigation() {
           )
         }
         entry<Collage> {
-          com.example.aestheticcamera.ui.collage.CollageMakerScreen(
+          CollageMakerScreen(
             onNavigateBack = { backStack.removeLastOrNull() }
           )
         }

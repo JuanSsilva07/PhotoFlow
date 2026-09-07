@@ -12,6 +12,7 @@ import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -106,7 +107,18 @@ fun CollageMakerScreen(
                     IconButton(
                         onClick = {
                             if (selectedUris.isNotEmpty()) {
-                                ShareHelper.shareMedia(context, selectedUris.first())
+                                scope.launch {
+                                    isExporting = true
+                                    val savedUri = withContext(Dispatchers.IO) {
+                                        saveCollageToGallery(context, selectedUris, selectedLayout, spacingDp, cornerRadiusDp, backgroundColor)
+                                    }
+                                    isExporting = false
+                                    if (savedUri != null) {
+                                        ShareHelper.shareMedia(context, savedUri)
+                                    } else {
+                                        Toast.makeText(context, "Erro ao preparar colagem para compartilhamento", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
                             }
                         },
                         enabled = !isExporting
@@ -141,18 +153,51 @@ fun CollageMakerScreen(
                 if (selectedUris.isEmpty()) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(20.dp)
                     ) {
                         Text("🖼️", fontSize = 42.sp)
                         Text(
-                            text = "Nenhuma foto selecionada",
-                            color = Color.White.copy(alpha = 0.6f),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
+                            text = "Crie Colagens Incríveis",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
                         )
+                        Text(
+                            text = "Combine até 9 fotos em grades modernas, tiras de filme 35mm e estilos editoriais elegantes.",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            lineHeight = 16.sp
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            listOf(
+                                "⊞ Grade 2x2",
+                                "▥ Dupla",
+                                "🎞️ Filme 35mm"
+                            ).forEach { tag ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.White.copy(alpha = 0.08f))
+                                        .border(0.5.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(tag, color = Color(0xFFFFD54F), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
                         Button(
                             onClick = { photoPickerLauncher.launch("image/*") },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD54F))
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD54F)),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Text("Selecionar Fotos (até 9)", color = Color.Black, fontWeight = FontWeight.Bold)
                         }
@@ -307,7 +352,6 @@ fun CollageMakerScreen(
                     onClick = {
                         scope.launch {
                             isExporting = true
-                            Toast.makeText(context, "Renderizando e salvando colagem...", Toast.LENGTH_SHORT).show()
                             val savedUri = withContext(Dispatchers.IO) {
                                 saveCollageToGallery(context, selectedUris, selectedLayout, spacingDp, cornerRadiusDp, backgroundColor)
                             }
@@ -461,7 +505,7 @@ fun CollageImageCell(
                             bitmap = BitmapFactory.decodeStream(stream)
                         }
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Log.e("CollageMakerScreen", "Erro ao decodificar imagem para colagem", e)
                     }
                 }
             }
@@ -647,7 +691,7 @@ private fun saveCollageToGallery(
         android.media.MediaScannerConnection.scanFile(context, arrayOf(uri.path ?: ""), arrayOf("image/jpeg"), null)
         return uri
     } catch (e: Exception) {
-        e.printStackTrace()
+        Log.e("CollageMakerScreen", "Erro ao salvar colagem exportada", e)
         resolver.delete(uri, null, null)
         return null
     }

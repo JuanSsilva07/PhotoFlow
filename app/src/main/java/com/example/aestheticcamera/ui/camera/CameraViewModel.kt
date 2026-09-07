@@ -12,14 +12,14 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.core.content.ContextCompat
+import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.OutputStream
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -27,7 +27,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import android.widget.Toast
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 enum class GuideType(val displayName: String) {
     NONE("Nenhum"),
@@ -100,7 +101,18 @@ data class CameraUiState(
     val cameraMode: CameraMode = CameraMode.PHOTO,
     val isRecordingVideo: Boolean = false,
     val recordingDurationSeconds: Int = 0,
-    val isSlowMotionEnabled: Boolean = false
+    val isSlowMotionEnabled: Boolean = false,
+    // Sprint 12 — Recursos de Câmera Avançada Pro
+    val isHorizonLevelEnabled: Boolean = false,
+    val isLiveHistogramEnabled: Boolean = false,
+    val isFocusPeakingEnabled: Boolean = false,
+    val isZebraHighlightsEnabled: Boolean = false,
+    val isLongExposureEnabled: Boolean = false,
+    val longExposureDurationSeconds: Int = 3,
+    val sensorRoll: Float = 0f,
+    val sensorPitch: Float = 0f,
+    val frameAnalysisResult: FrameAnalysisResult = FrameAnalysisResult(),
+    val lastCapturedMediaUri: Uri? = null
 )
 
 class CameraViewModel : ViewModel() {
@@ -114,8 +126,60 @@ class CameraViewModel : ViewModel() {
         _uiState.value = _uiState.value.copy(activeFilter = filter)
     }
 
+    fun loadLastCapturedMedia(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val projection = arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DATE_ADDED)
+                val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC LIMIT 1"
+                context.contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    null,
+                    null,
+                    sortOrder
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID))
+                        val uri = android.content.ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                        _uiState.value = _uiState.value.copy(lastCapturedMediaUri = uri)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Erro ao carregar última mídia capturada", e)
+            }
+        }
+    }
+
     fun selectGuide(guide: GuideType) {
         _uiState.value = _uiState.value.copy(activeGuide = guide)
+    }
+
+    fun toggleHorizonLevel() {
+        _uiState.value = _uiState.value.copy(isHorizonLevelEnabled = !_uiState.value.isHorizonLevelEnabled)
+    }
+
+    fun toggleLiveHistogram() {
+        _uiState.value = _uiState.value.copy(isLiveHistogramEnabled = !_uiState.value.isLiveHistogramEnabled)
+    }
+
+    fun toggleFocusPeaking() {
+        _uiState.value = _uiState.value.copy(isFocusPeakingEnabled = !_uiState.value.isFocusPeakingEnabled)
+    }
+
+    fun toggleZebraHighlights() {
+        _uiState.value = _uiState.value.copy(isZebraHighlightsEnabled = !_uiState.value.isZebraHighlightsEnabled)
+    }
+
+    fun toggleLongExposure() {
+        _uiState.value = _uiState.value.copy(isLongExposureEnabled = !_uiState.value.isLongExposureEnabled)
+    }
+
+    fun updateSensorOrientation(roll: Float, pitch: Float) {
+        _uiState.value = _uiState.value.copy(sensorRoll = roll, sensorPitch = pitch)
+    }
+
+    fun updateFrameAnalysisResult(result: FrameAnalysisResult) {
+        _uiState.value = _uiState.value.copy(frameAnalysisResult = result)
     }
 
     fun setFilterIntensity(intensity: Float) {
@@ -251,12 +315,12 @@ class CameraViewModel : ViewModel() {
     private fun startRecordingTimer() {
         videoTimerJob?.cancel()
         videoTimerJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(recordingDurationSeconds = 0)
+            _uiState.update { it.copy(recordingDurationSeconds = 0) }
             while (true) {
                 delay(1000)
-                _uiState.value = _uiState.value.copy(
-                    recordingDurationSeconds = _uiState.value.recordingDurationSeconds + 1
-                )
+                _uiState.update {
+                    it.copy(recordingDurationSeconds = it.recordingDurationSeconds + 1)
+                }
             }
         }
     }
@@ -414,11 +478,6 @@ class CameraViewModel : ViewModel() {
         val isDateStamp = _uiState.value.isAutoDateStampEnabled
         val frameStyle = _uiState.value.autoFrameStyle
 
-        android.util.Log.d(
-            "AestheticCamera",
-            "capturePhoto() — AR=${captureAspectRatio.name}, Filtro=${captureFilter.name}, Burst=${captureBurst}, Timer=${timerSecs}s, Grain=${isGrain}, LightLeak=${isLightLeak}, DateStamp=${isDateStamp}, Frame=${frameStyle}"
-        )
-
         _uiState.value = _uiState.value.copy(
             isCapturing = true,
             captureError = null,
@@ -450,16 +509,12 @@ class CameraViewModel : ViewModel() {
                             val bitmap = imageProxyToBitmap(image)
                             image.close()
 
-                            android.util.Log.d("AestheticCamera", "Burst/Single $idx: Original ${bitmap.width}x${bitmap.height}")
-
                             val croppedBitmap = cropToMatchPreviewAndRatio(
                                 bitmap,
                                 screenWidth,
                                 screenHeight,
                                 captureAspectRatio
                             )
-
-                            android.util.Log.d("AestheticCamera", "Burst/Single $idx: Cropped ${croppedBitmap.width}x${croppedBitmap.height}")
 
                             val filteredBitmap = applyFilter(croppedBitmap, captureFilter, captureFilterIntensity)
 
@@ -528,9 +583,6 @@ class CameraViewModel : ViewModel() {
                     if (savedUri != null) {
                         lastSavedUri = savedUri
                         if (captureBurst) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "Burst: Foto $idx de 5 salva!", Toast.LENGTH_SHORT).show()
-                            }
                             delay(200) // Pequeno intervalo entre disparos no burst
                         }
                     }
@@ -539,7 +591,8 @@ class CameraViewModel : ViewModel() {
                 if (lastSavedUri != null) {
                     _uiState.value = _uiState.value.copy(
                         isCapturing = false,
-                        captureResultUri = lastSavedUri
+                        captureResultUri = lastSavedUri,
+                        lastCapturedMediaUri = lastSavedUri
                     )
                     withContext(Dispatchers.Main) {
                         onCaptureSuccess(lastSavedUri)
@@ -580,9 +633,9 @@ class CameraViewModel : ViewModel() {
                 onSuccess = { uri ->
                     _uiState.value = _uiState.value.copy(
                         isCapturing = false,
-                        captureResultUri = uri
+                        captureResultUri = uri,
+                        lastCapturedMediaUri = uri
                     )
-                    Toast.makeText(context, "Vídeo salvo com sucesso na Galeria!", Toast.LENGTH_LONG).show()
                 },
                 onError = { error ->
                     _uiState.value = _uiState.value.copy(
@@ -606,7 +659,9 @@ class CameraViewModel : ViewModel() {
         return if (rotationDegrees != 0) {
             val matrix = android.graphics.Matrix()
             matrix.postRotate(rotationDegrees.toFloat())
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            bitmap.recycle()
+            rotated
         } else {
             bitmap
         }
@@ -624,12 +679,12 @@ class CameraViewModel : ViewModel() {
     }
 
     private fun saveBitmapToGallery(context: Context, bitmap: Bitmap): Uri? {
-        val filename = "AESTHETIC_${System.currentTimeMillis()}.jpg"
+        val filename = "PHOTOFLOW_${System.currentTimeMillis()}.jpg"
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/AestheticCamera")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/PhotoFlow")
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
         }
@@ -711,14 +766,12 @@ class CameraViewModel : ViewModel() {
     private fun applyGrain(src: Bitmap, amount: Float): Bitmap {
         if (amount <= 0.01f) return src
         val result = src.copy(src.config ?: Bitmap.Config.ARGB_8888, true)
-        val noiseBmp = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888)
         val rand = java.util.Random()
-        for (x in 0 until 128) {
-            for (y in 0 until 128) {
-                val noise = rand.nextInt(256)
-                noiseBmp.setPixel(x, y, android.graphics.Color.argb(255, noise, noise, noise))
-            }
+        val pixels = IntArray(128 * 128) {
+            val noise = rand.nextInt(256)
+            (0xFF shl 24) or (noise shl 16) or (noise shl 8) or noise
         }
+        val noiseBmp = Bitmap.createBitmap(pixels, 128, 128, Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(result)
         val grainPaint = android.graphics.Paint()
         grainPaint.shader = android.graphics.BitmapShader(noiseBmp, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
@@ -893,5 +946,9 @@ class CameraViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         cameraExecutor.shutdown()
+    }
+
+    companion object {
+        private const val TAG = "CameraViewModel"
     }
 }

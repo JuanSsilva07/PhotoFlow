@@ -16,7 +16,14 @@ class MainActivity : ComponentActivity() {
 
     enableEdgeToEdge()
     setContent {
-      AestheticCameraTheme { Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { MainNavigation() } }
+      AestheticCameraTheme {
+        Surface(
+          modifier = Modifier.fillMaxSize(),
+          color = MaterialTheme.colorScheme.background
+        ) {
+          MainNavigation()
+        }
+      }
     }
   }
 }

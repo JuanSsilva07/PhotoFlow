@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -140,14 +141,19 @@ fun CurvesCanvas(
 ) {
     var activePointIndex by remember { mutableStateOf<Int?>(null) }
     val density = LocalDensity.current
-    val touchRadiusPx = with(density) { 24.dp.toPx() }
+    val touchRadiusPx = with(density) { 40.dp.toPx() }
     val currentPoints by rememberUpdatedState(points)
+
+    val canvasBgColor = remember(channelColor) {
+        if (channelColor == Color.White) Color(0xFF121212)
+        else channelColor.copy(alpha = 0.08f)
+    }
 
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .background(Color(0xFF121212), RoundedCornerShape(12.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+            .background(canvasBgColor, RoundedCornerShape(12.dp))
+            .border(1.dp, channelColor.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
     ) {
         Canvas(
             modifier = Modifier
@@ -332,42 +338,59 @@ fun CurvesCanvas(
     }
 
     // Controls for deleting/resetting the selected curve point
+    // Controls for deleting/resetting the selected curve point
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp),
+            .padding(top = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         val selectedIndex = activePointIndex
         val canDelete = selectedIndex != null && selectedIndex != 0 && selectedIndex != points.size - 1
 
-        TextButton(
-            onClick = {
-                if (canDelete && selectedIndex != null) {
-                    val mutablePoints = points.toMutableList()
-                    mutablePoints.removeAt(selectedIndex)
-                    onPointsChange(mutablePoints)
-                    activePointIndex = null
-                }
-            },
-            enabled = canDelete,
-            colors = ButtonDefaults.textButtonColors(
-                contentColor = Color(0xFFFF5252),
-                disabledContentColor = Color.White.copy(alpha = 0.15f)
-            )
-        ) {
-            Text("Remover Ponto", fontSize = 11.sp)
+        if (canDelete) {
+            Surface(
+                onClick = {
+                    if (selectedIndex != null) {
+                        val mutablePoints = points.toMutableList()
+                        mutablePoints.removeAt(selectedIndex)
+                        onPointsChange(mutablePoints)
+                        activePointIndex = null
+                    }
+                },
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFFFF5252).copy(alpha = 0.15f),
+                border = BorderStroke(0.5.dp, Color(0xFFFF5252).copy(alpha = 0.4f))
+            ) {
+                Text(
+                    text = "Remover Ponto",
+                    color = Color(0xFFFF5252),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        } else {
+            Spacer(modifier = Modifier.width(1.dp))
         }
 
-        TextButton(
+        Surface(
             onClick = {
                 onPointsChange(listOf(PointF(0f, 0f), PointF(1f, 1f)))
                 activePointIndex = null
             },
-            colors = ButtonDefaults.textButtonColors(contentColor = Color.White.copy(alpha = 0.6f))
+            shape = RoundedCornerShape(8.dp),
+            color = Color.White.copy(alpha = 0.08f),
+            border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f))
         ) {
-            Text("Resetar Canal", fontSize = 11.sp)
+            Text(
+                text = "Resetar Canal",
+                color = Color.White.copy(alpha = 0.8f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            )
         }
     }
 }
@@ -399,6 +422,7 @@ fun CurvesControlTabRow(
             Tab(
                 selected = selectedChannel == channel,
                 onClick = { onChannelChange(channel) },
+                modifier = Modifier.height(34.dp),
                 text = {
                     Text(
                         text = channel.name,

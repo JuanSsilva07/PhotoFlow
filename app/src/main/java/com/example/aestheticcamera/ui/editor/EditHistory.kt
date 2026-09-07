@@ -24,17 +24,22 @@ data class EditState(
     val redCurve: List<PointF> = listOf(PointF(0f, 0f), PointF(1f, 1f)),
     val greenCurve: List<PointF> = listOf(PointF(0f, 0f), PointF(1f, 1f)),
     val blueCurve: List<PointF> = listOf(PointF(0f, 0f), PointF(1f, 1f)),
-    val hslAdjustments: Map<HslColorChannel, HslAdjustment> = HslColorChannel.values().associateWith { HslAdjustment() },
+    val hslAdjustments: Map<HslColorChannel, HslAdjustment> = HslColorChannel.entries.associateWith { HslAdjustment() },
     val lightLeakStyle: Int = 0,
     val lightLeakOpacity: Float = 0f,
     val dateStampEnabled: Boolean = false,
     val frameStyle: Int = 0,
     val textOverlays: List<TextOverlayItem> = emptyList(),
     val stickerOverlays: List<StickerOverlayItem> = emptyList(),
-    val tiltShiftConfig: TiltShiftConfig = TiltShiftConfig()
+    val tiltShiftConfig: TiltShiftConfig = TiltShiftConfig(),
+    // Sprint 10
+    val vignetteShape: String = "ELLIPSE",      // ELLIPSE | ROUNDED_RECT
+    val presetName: String? = null,              // Nome do preset ativo (null = sem preset)
+    // Sprint 11 — IA
+    val aiFilterApplied: String? = null          // Identificador do filtro IA aplicado (null = nenhum)
 )
 
-class EditHistory(initialState: EditState) {
+class EditHistory(initialState: EditState, private val maxSize: Int = 50) {
     private val states = mutableListOf(initialState)
     private var currentIndex = 0
 
@@ -49,6 +54,11 @@ class EditHistory(initialState: EditState) {
         if (states[currentIndex] != state) {
             states.add(state)
             currentIndex++
+            // Prune oldest if over limit
+            if (states.size > maxSize) {
+                states.removeAt(0)
+                currentIndex = (currentIndex - 1).coerceAtLeast(0)
+            }
         }
     }
 

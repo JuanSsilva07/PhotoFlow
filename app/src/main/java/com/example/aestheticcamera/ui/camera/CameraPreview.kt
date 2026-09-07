@@ -64,6 +64,8 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,6 +73,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import com.example.aestheticcamera.R
 import com.example.aestheticcamera.ui.camera.components.CompositionOverlays
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -1673,14 +1677,14 @@ fun CameraScreen(
                                         }
                                     }
                                 } else {
-                                    // Photo Capture
+                                    // Photo Capture (silencioso, sem toasts/logs invasivos na tela)
                                     viewModel.capturePhoto(
                                         context = context,
                                         imageCapture = imageCapture,
                                         screenWidth = screenWidthPx,
                                         screenHeight = screenHeightPx
                                     ) { uri ->
-                                        onNavigateToEditor(Uri.encode(uri.toString()))
+                                        // A miniatura no canto inferior direito atualiza de forma reativa
                                     }
                                 }
                             }
@@ -1728,8 +1732,44 @@ fun CameraScreen(
                             }
                         }
 
-                        // Direita: EspaÃ§ador (balanceia o botÃ£o de captura)
-                        Box(modifier = Modifier.weight(1f))
+                        // Direita: Thumbnail da última foto capturada com acesso direto
+                        val lastUri = uiState.lastCapturedMediaUri
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.4f))
+                                    .border(BorderStroke(1.5.dp, Color(0xFFFFD54F)), CircleShape)
+                                    .clickable {
+                                        if (lastUri != null) {
+                                            onNavigateToEditor(Uri.encode(lastUri.toString()))
+                                        } else {
+                                            onNavigateBack()
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (lastUri != null) {
+                                    AsyncImage(
+                                        model = lastUri,
+                                        contentDescription = "Última Foto",
+                                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_album),
+                                        contentDescription = "Álbum",
+                                        tint = Color.White.copy(alpha = 0.8f),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 

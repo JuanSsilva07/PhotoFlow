@@ -1,4 +1,4 @@
-# Aesthetic Camera — ProGuard & R8 Optimization Rules
+# PhotoFlow — ProGuard & R8 Optimization Rules
 
 # Preserve Jetpack Compose runtime classes & annotations
 -keepclassmembers class * extends androidx.compose.ui.Modifier { *; }
@@ -17,3 +17,17 @@
 # Preserve Data Models
 -keep class com.example.aestheticcamera.ui.editor.model.** { *; }
 -keep class com.example.aestheticcamera.ui.editor.EditState { *; }
+
+# Preserve Navigation3 Keys & Kotlinx Serialization
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.AnnotationsKt
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keep,includedescriptorclasses class com.example.aestheticcamera.**$$serializer { *; }
+-keepclassmembers class com.example.aestheticcamera.** {
+    *** Companion;
+}
+-keepclasseswithmembers class com.example.aestheticcamera.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+-keep class com.example.aestheticcamera.* implements androidx.navigation3.runtime.NavKey { *; }
+

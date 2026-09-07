@@ -16,10 +16,12 @@ import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 object VideoTranscoder {
 
@@ -55,34 +57,36 @@ object VideoTranscoder {
                             .setVideoMimeType(MimeTypes.VIDEO_H264)
                             .build()
 
-                        val isCompleted = AtomicBoolean(false)
-                        var errorMsg: String? = null
-
-                        val listener = object : Transformer.Listener {
-                            override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                                isCompleted.set(true)
-                            }
-
-                            override fun onError(
-                                composition: Composition,
-                                exportResult: ExportResult,
-                                exportException: ExportException
-                            ) {
-                                errorMsg = exportException.message ?: "Erro na transcodificação"
-                                isCompleted.set(true)
-                            }
-                        }
-
                         withContext(Dispatchers.Main) {
-                            transformer.addListener(listener)
-                            transformer.start(editedMediaItem, processedFile.absolutePath)
+                            suspendCancellableCoroutine { continuation ->
+                                val listener = object : Transformer.Listener {
+                                    override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                                        if (continuation.isActive) continuation.resume(Unit)
+                                    }
+
+                                    override fun onError(
+                                        composition: Composition,
+                                        exportResult: ExportResult,
+                                        exportException: ExportException
+                                    ) {
+                                        if (continuation.isActive) {
+                                            continuation.resumeWithException(exportException)
+                                        }
+                                    }
+                                }
+
+                                transformer.addListener(listener)
+                                transformer.start(editedMediaItem, processedFile.absolutePath)
+
+                                continuation.invokeOnCancellation {
+                                    try {
+                                        transformer.cancel()
+                                    } catch (_: Exception) {}
+                                }
+                            }
                         }
 
-                        while (!isCompleted.get()) {
-                            kotlinx.coroutines.delay(100)
-                        }
-
-                        if (errorMsg == null && processedFile.exists() && processedFile.length() > 0) {
+                        if (processedFile.exists() && processedFile.length() > 0) {
                             savedUri = saveVideoToGallery(context, processedFile)
                         }
                     } catch (e: Exception) {
@@ -111,7 +115,9 @@ object VideoTranscoder {
                 }
             } finally {
                 // Limpeza dos arquivos temporários de cache
-                if (inputFile.exists()) inputFile.delete()
+                if (inputFile.absolutePath.startsWith(context.cacheDir.absolutePath) && inputFile.exists()) {
+                    inputFile.delete()
+                }
                 if (processedFile.exists()) processedFile.delete()
             }
         }
@@ -124,7 +130,7 @@ object VideoTranscoder {
             put(MediaStore.Video.Media.DISPLAY_NAME, filename)
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/AestheticCamera")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/PhotoFlow")
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
         }

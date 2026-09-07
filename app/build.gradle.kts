@@ -12,7 +12,7 @@ android {
         minSdk = 31
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
     }
 
     buildTypes {
@@ -101,4 +101,7 @@ dependencies {
 
   // Coil (Carregamento de imagens)
   implementation(libs.coil.compose)
+
+  // Google Fonts (tipografia premium - Inter)
+  implementation(libs.androidx.ui.text.google.fonts)
 }

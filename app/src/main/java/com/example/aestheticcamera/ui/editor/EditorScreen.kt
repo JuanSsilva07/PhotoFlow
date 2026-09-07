@@ -1,5 +1,7 @@
 package com.example.aestheticcamera.ui.editor
 
+import com.example.aestheticcamera.R
+import androidx.compose.ui.res.painterResource
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -10,15 +12,28 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlin.math.sign
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -44,9 +59,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.aestheticcamera.theme.*
 import com.example.aestheticcamera.ui.camera.AestheticFilters
 import com.example.aestheticcamera.ui.camera.FilterThumbnailItem
 import com.example.aestheticcamera.ui.camera.FilterType
+import com.example.aestheticcamera.ui.components.PremiumChip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,7 +79,10 @@ import androidx.compose.ui.text.style.TextAlign
 enum class CropRatio(val displayName: String, val w: Int, val h: Int) {
     FREE("Livre", 0, 0),
     SQUARE("1:1", 1, 1),
+    FOUR_FIVE("4:5", 4, 5),
+    THREE_FOUR("3:4", 3, 4),
     FOUR_THREE("4:3", 4, 3),
+    NINE_SIXTEEN("9:16", 9, 16),
     SIXTEEN_NINE("16:9", 16, 9)
 }
 
@@ -109,7 +129,9 @@ fun EditorScreen(
     var currentEditState by remember { mutableStateOf(history.getCurrentState()) }
 
     // Bitmaps para o Preview em tempo real otimizado
+    // sourcePreviewBitmap: cópia imutável do original (usada por filtros IA como base, nunca sobrescrita)
     var originalPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var sourcePreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var processedPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     // Estados locais temporários para controlar as abas
@@ -121,11 +143,51 @@ fun EditorScreen(
     var splitFraction by remember { mutableFloatStateOf(0f) }
     var isSaving by remember { mutableStateOf(false) }
 
-    // Estados do Modal de Opções de Exportação & Marca d'Água
+    // Estados dos Modais (Exportação & Presets)
     var showExportDialog by remember { mutableStateOf(false) }
+    var showPresetSheet by remember { mutableStateOf(false) }
     var selectedExportFormat by remember { mutableStateOf("JPEG") }
     var selectedExportQuality by remember { mutableFloatStateOf(90f) }
-    var watermarkEnabled by remember { mutableStateOf(true) }
+    var watermarkEnabled by remember { mutableStateOf(false) }
+
+    // Estado e Launcher para Style Match (IA)
+    var aiStyleMatchRequested by remember { mutableStateOf(false) }
+    val aiStyleMatchLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null && originalPreviewBitmap != null) {
+            scope.launch {
+                try {
+                    val refBmp = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use {
+                            android.graphics.BitmapFactory.decodeStream(it)
+                        }
+                    }
+                    if (refBmp != null) {
+                        val matchedBmp = withContext(Dispatchers.Default) {
+                            com.example.aestheticcamera.ui.editor.ai.StyleMatchEngine.applyStyleMatch(
+                                (sourcePreviewBitmap ?: originalPreviewBitmap)!!, refBmp
+                            )
+                        }
+                        originalPreviewBitmap = matchedBmp
+                        currentEditState = currentEditState.copy(aiFilterApplied = "STYLE_MATCH")
+                        history.pushState(currentEditState)
+                        Toast.makeText(context, "🎨 Estilo transferido com sucesso!", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Erro no Style Match: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    // Disparar o picker quando solicitado pela aba de IA
+    LaunchedEffect(aiStyleMatchRequested) {
+        if (aiStyleMatchRequested) {
+            aiStyleMatchLauncher.launch("image/*")
+            aiStyleMatchRequested = false
+        }
+    }
 
     // Verificar se o URI da mídia é um arquivo de vídeo
     val isVideo = remember(decodedUri) {
@@ -135,6 +197,17 @@ fun EditorScreen(
 
     var isVideoPlaying by remember { mutableStateOf(false) }
     var mediaPlayerRef by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                mediaPlayerRef?.release()
+                mediaPlayerRef = null
+            } catch (e: Exception) {
+                android.util.Log.e("EditorScreen", "Erro ao liberar MediaPlayer", e)
+            }
+        }
+    }
 
     LaunchedEffect(isVideo) {
         if (isVideo) {
@@ -173,9 +246,6 @@ fun EditorScreen(
     LaunchedEffect(decodedUri) {
         withContext(Dispatchers.IO) {
             try {
-                val mimeType = context.contentResolver.getType(decodedUri)
-                val isVideo = mimeType?.startsWith("video/") == true || decodedUri.toString().contains("video")
-
                 if (isVideo) {
                     val retriever = android.media.MediaMetadataRetriever()
                     try {
@@ -230,14 +300,14 @@ fun EditorScreen(
                                 }
                             }
                         } catch (e: Exception) {
-                            e.printStackTrace()
+                            Log.e("EditorScreen", "Erro ao carregar frame de vídeo", e)
                         } finally {
                             try { retriever.release() } catch (e: Exception) {}
                         }
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("EditorScreen", "Erro ao decodificar imagem/vídeo para edição", e)
             }
         }
     }
@@ -284,119 +354,187 @@ fun EditorScreen(
                 lightLeakOpacity = currentEditState.lightLeakOpacity,
                 dateStampEnabled = currentEditState.dateStampEnabled,
                 frameStyle = currentEditState.frameStyle,
-                tiltShiftConfig = currentEditState.tiltShiftConfig
+                tiltShiftConfig = currentEditState.tiltShiftConfig,
+                vignetteShape = currentEditState.vignetteShape
             )
 
             withContext(Dispatchers.Main) {
+                val old = processedPreviewBitmap
                 processedPreviewBitmap = processed
+                if (old != null && old != originalPreviewBitmap && old != sourcePreviewBitmap && !old.isRecycled) {
+                    old.recycle()
+                }
             }
         }
     }
+
+    // Quando o originalPreviewBitmap é carregado do disco pela 1ª vez, salvá-lo como source imutável
+    LaunchedEffect(originalPreviewBitmap) {
+        if (sourcePreviewBitmap == null && originalPreviewBitmap != null) {
+            sourcePreviewBitmap = originalPreviewBitmap
+        }
+    }
+
+    var isFullscreenPreview by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Color.Black,
         topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onNavigateBack, enabled = !isSaving) {
-                    Text("✕", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                }
+            if (!isFullscreenPreview) {
+                var showOverflowMenu by remember { mutableStateOf(false) }
 
-                // Painel de Histórico (Undo / Redo / Reset)
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // 1. Fechar
+                    IconButton(
+                        onClick = onNavigateBack,
+                        enabled = !isSaving,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_close),
+                            contentDescription = "Fechar",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // 2. Desfazer (Undo)
                     IconButton(
                         onClick = {
                             val state = history.undo()
                             if (state != null) {
                                 currentEditState = state
-                                // Haptic feedback
-                                try {
-                                    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(20, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                                } catch (e: Exception) {}
+                                if (state.aiFilterApplied == null && currentEditState.aiFilterApplied != null) {
+                                    originalPreviewBitmap = sourcePreviewBitmap
+                                }
                             }
                         },
-                        enabled = history.canUndo() && !isSaving
+                        enabled = history.canUndo() && !isSaving,
+                        modifier = Modifier.size(38.dp)
                     ) {
-                        Text("↶", color = if (history.canUndo()) Color.White else Color.White.copy(alpha = 0.3f), fontSize = 22.sp)
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_undo),
+                            contentDescription = "Desfazer",
+                            tint = if (history.canUndo()) Color.White else Color.White.copy(alpha = 0.3f),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
 
+                    // 3. Refazer (Redo)
                     IconButton(
                         onClick = {
                             val state = history.redo()
                             if (state != null) {
                                 currentEditState = state
-                                // Haptic feedback
-                                try {
-                                    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(20, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                                } catch (e: Exception) {}
                             }
                         },
-                        enabled = history.canRedo() && !isSaving
+                        enabled = history.canRedo() && !isSaving,
+                        modifier = Modifier.size(38.dp)
                     ) {
-                        Text("↷", color = if (history.canRedo()) Color.White else Color.White.copy(alpha = 0.3f), fontSize = 22.sp)
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_redo),
+                            contentDescription = "Refazer",
+                            tint = if (history.canRedo()) Color.White else Color.White.copy(alpha = 0.3f),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
 
-                    TextButton(
-                        onClick = {
-                            originalPreviewBitmap?.let { bmp ->
-                                val enhanced = com.example.aestheticcamera.ui.editor.ai.AutoEnhanceEngine.autoEnhanceImage(bmp, currentEditState)
-                                currentEditState = enhanced
-                                history.pushState(enhanced)
-                                Toast.makeText(context, "🪄 Auto-Enhance Aplicado!", Toast.LENGTH_SHORT).show()
-                                try {
-                                    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(35, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                                } catch (e: Exception) {}
-                            }
-                        },
-                        enabled = originalPreviewBitmap != null && !isSaving
-                    ) {
-                        Text("🪄 AI", color = Color(0xFFFFD54F), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    TextButton(
-                        onClick = {
-                            val initialState = EditState()
-                            history.pushState(initialState)
-                            currentEditState = initialState
-                            try {
-                                val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                                vibrator?.vibrate(android.os.VibrationEffect.createOneShot(45, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                            } catch (e: Exception) {}
-                        },
-                        enabled = (currentEditState != EditState()) && !isSaving
-                    ) {
-                        Text("Redefinir", color = if (currentEditState != EditState()) Color.White else Color.White.copy(alpha = 0.3f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-
+                    // 4. A/B Comparador
                     IconButton(
+                        onClick = { splitFraction = if (splitFraction > 0f) 0f else 0.5f },
+                        enabled = !isSaving,
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_compare),
+                            contentDescription = "Comparar A/B",
+                            tint = if (splitFraction > 0f) Amber400 else Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    // 5. Botão Salvar (Primary Amber Pill)
+                    Button(
                         onClick = { showExportDialog = true },
-                        enabled = !isSaving
+                        enabled = !isSaving,
+                        colors = ButtonDefaults.buttonColors(containerColor = Amber400, contentColor = Surface0),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
-                        Text("⚙️", fontSize = 18.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_save),
+                                contentDescription = "Salvar",
+                                tint = Surface0,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text("Salvar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
-                    IconButton(
-                        onClick = { com.example.aestheticcamera.ui.share.ShareHelper.shareMedia(context, decodedUri) },
-                        enabled = !isSaving
-                    ) {
-                        Text("📲", fontSize = 18.sp)
+                    // 6. Overflow Menu (⋮)
+                    Box {
+                        IconButton(
+                            onClick = { showOverflowMenu = true },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_more_vert),
+                                contentDescription = "Mais opções",
+                                tint = Color.White.copy(alpha = 0.8f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false },
+                            modifier = Modifier.background(Surface1)
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Presets Salvos", color = Color.White) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    showPresetSheet = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Redefinir Tudo", color = Color.White) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    val initialState = EditState()
+                                    history.reset(initialState)
+                                    currentEditState = initialState
+                                    if (sourcePreviewBitmap != null) {
+                                        originalPreviewBitmap = sourcePreviewBitmap
+                                    }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Compartilhar", color = Color.White) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    com.example.aestheticcamera.ui.share.ShareHelper.shareMedia(context, decodedUri)
+                                }
+                            )
+                        }
                     }
                 }
             }
         }
+    }
     ) { paddingValues ->
         Box(
             modifier = Modifier
@@ -407,7 +545,7 @@ fun EditorScreen(
                 if (isVideo) {
                     listOf("Filtros", "Ajustes", "Retrô", "Recortar/Girar")
                 } else {
-                    listOf("Filtros", "Ajustes", "Curvas", "HSL", "Retrô", "Texto", "Stickers", "Tilt-Shift", "Recortar/Girar")
+                    listOf("Filtros", "Ajustes", "Curvas", "HSL", "Retrô", "Texto", "Stickers", "Tilt-Shift", "IA", "Recortar/Girar")
                 }
             }
             val safeTab = selectedTab.coerceIn(0, availableTabs.size - 1)
@@ -418,36 +556,86 @@ fun EditorScreen(
             } else {
                 imageAspectRatio
             }
+            // Quando há rotação de 90° ou 270°, o aspect ratio precisa ser invertido (W↔H)
+            // para que o container do preview tenha a forma correta (portrait ↔ landscape).
+            val isRotated90or270 = (currentEditState.rotationAngle % 180f) != 0f
+            val orientedAspectRatio = if (isRotated90or270) 1f / baseAspectRatio else baseAspectRatio
+
             // Quando há moldura, o bitmap processado tem dimensões diferentes da foto original.
             // Usamos as dimensões reais do bitmap para calcular o aspect ratio correto.
             val currentAspectRatio = if (currentEditState.frameStyle > 0) {
                 processedPreviewBitmap?.let { bmp ->
-                    bmp.width.toFloat() / bmp.height.toFloat()
-                } ?: baseAspectRatio
+                    val bmpRatio = bmp.width.toFloat() / bmp.height.toFloat()
+                    if (isRotated90or270) 1f / bmpRatio else bmpRatio
+                } ?: orientedAspectRatio
             } else {
-                baseAspectRatio
+                orientedAspectRatio
             }
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.52f)
-                    .align(Alignment.TopCenter)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .fillMaxHeight(if (isFullscreenPreview) 1f else 0.58f)
+                    .align(if (isFullscreenPreview) Alignment.Center else Alignment.TopCenter)
+                    .padding(if (isFullscreenPreview) PaddingValues(0.dp) else PaddingValues(horizontal = 16.dp, vertical = 8.dp)),
                 contentAlignment = Alignment.Center
             ) {
+                var previewScale by remember { mutableFloatStateOf(1f) }
+                var previewPanOffset by remember { mutableStateOf(Offset.Zero) }
+
                 val imageModifier = Modifier
                     .graphicsLayer {
+                        scaleX = previewScale
+                        scaleY = previewScale
+                        translationX = previewPanOffset.x
+                        translationY = previewPanOffset.y
                         rotationZ = currentEditState.rotationAngle
                     }
 
                 BoxWithConstraints(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .aspectRatio(currentAspectRatio)
-                        .clip(RoundedCornerShape(8.dp))
-                        .border(BorderStroke(1.5.dp, Color(0xFFFFD54F)), RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(if (isFullscreenPreview) 0.dp else 8.dp))
+                        .border(
+                            BorderStroke(
+                                if (isFullscreenPreview) 0.dp else 1.5.dp,
+                                if (isFullscreenPreview) Color.Transparent else Color(0xFFFFD54F)
+                            ),
+                            RoundedCornerShape(if (isFullscreenPreview) 0.dp else 8.dp)
+                        )
+                        .pointerInput(previewScale) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    if (previewScale > 1.05f) {
+                                        previewScale = 1f
+                                        previewPanOffset = Offset.Zero
+                                    } else {
+                                        isFullscreenPreview = !isFullscreenPreview
+                                    }
+                                }
+                            )
+                        }
                         .pointerInput(isVideo) {
                             if (!isVideo) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    val newScale = (previewScale * zoom).coerceIn(1f, 4f)
+                                    previewScale = newScale
+                                    if (newScale > 1f) {
+                                        val maxPanX = (size.width * (newScale - 1f)) / 2f
+                                        val maxPanY = (size.height * (newScale - 1f)) / 2f
+                                        previewPanOffset = Offset(
+                                            x = (previewPanOffset.x + pan.x * newScale).coerceIn(-maxPanX, maxPanX),
+                                            y = (previewPanOffset.y + pan.y * newScale).coerceIn(-maxPanY, maxPanY)
+                                        )
+                                    } else {
+                                        previewPanOffset = Offset.Zero
+                                    }
+                                }
+                            }
+                        }
+                        .pointerInput(isVideo, previewScale) {
+                            if (!isVideo && previewScale <= 1.05f) {
                                 detectDragGestures(
                                     onDragStart = { offset ->
                                         val touchX = offset.x / size.width
@@ -515,7 +703,7 @@ fun EditorScreen(
                                                     }
                                                     mediaPlayerRef = mp
                                                 } catch (e: Exception) {
-                                                    e.printStackTrace()
+                                                    Log.e("EditorScreen", "Erro ao inicializar MediaPlayer para preview de vídeo", e)
                                                 }
                                             }
 
@@ -609,25 +797,39 @@ fun EditorScreen(
                             }
                         }
                     } else if (originalBmp != null && editedBmp != null) {
+                        val previewContentScale = if (currentEditState.selectedCropRatio != CropRatio.FREE) {
+                            ContentScale.Crop
+                        } else {
+                            ContentScale.Fit
+                        }
+
+                        val density = LocalDensity.current
+                        val contentModifier = if (isRotated90or270) {
+                            Modifier.size(
+                                width = with(density) { height.toDp() },
+                                height = with(density) { width.toDp() }
+                            )
+                        } else {
+                            Modifier.fillMaxSize()
+                        }
+
                         // 1. Imagem Original (fundo, sem filtros/ajustes)
                         Image(
                             bitmap = originalBmp.asImageBitmap(),
                             contentDescription = "Original",
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer { rotationZ = currentEditState.rotationAngle },
-                            contentScale = ContentScale.Fit
+                            modifier = contentModifier
+                                .then(imageModifier),
+                            contentScale = previewContentScale
                         )
 
                         // 2. Imagem Editada (por cima, recortada usando a RightSplitShape)
                         Image(
                             bitmap = editedBmp.asImageBitmap(),
                             contentDescription = "Editada",
-                            modifier = Modifier
-                                .fillMaxSize()
+                            modifier = contentModifier
                                 .clip(RightSplitShape(splitFraction))
                                 .then(imageModifier),
-                            contentScale = ContentScale.Fit
+                            contentScale = previewContentScale
                         )
 
                         // 3. Renderização de Textos & Stickers com Gestos de Arrasto Livre (recortado na visão Antes/Depois)
@@ -759,107 +961,166 @@ fun EditorScreen(
                         }
 
                         if (splitFraction > 0f) {
-                            // 3. Linha Divisória e Alça de Arrasto
+                            // 3. Linha Divisória e Alça de Arrasto Âmbar
                             val splitXPx = width * splitFraction
                             val splitXDp = with(LocalDensity.current) { splitXPx.toDp() }
 
                             Box(
                                 modifier = Modifier
                                     .fillMaxHeight()
-                                    .width(1.5.dp)
+                                    .width(2.dp)
                                     .offset(x = splitXDp)
-                                    .background(Color.White)
+                                    .background(Amber400)
                             )
 
-                            // Círculo com seta de alça no centro
+                            // Pill de mola no centro da alça
                             Box(
                                 modifier = Modifier
-                                    .size(28.dp)
-                                    .offset(x = splitXDp - 14.dp)
+                                    .size(34.dp)
+                                    .offset(x = splitXDp - 17.dp)
                                     .align(Alignment.CenterStart)
                                     .clip(CircleShape)
-                                    .background(Color.White)
-                                    .border(BorderStroke(1.dp, Color.Black.copy(alpha = 0.2f)), CircleShape),
+                                    .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Amber400, Amber600)))
+                                    .border(1.dp, Color.White, CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = "↔",
-                                    color = Color.Black,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
+                                    color = Surface0,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.ExtraBold
                                 )
                             }
 
-                            // Rótulos BEFORE / AFTER
+                            // Rótulos ANTES / DEPOIS
                             Text(
-                                text = "BEFORE",
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold,
+                                text = "ANTES",
+                                color = Surface0,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
                                     .padding(8.dp)
-                                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                                    .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(6.dp))
+                                    .border(0.5.dp, BorderSubtle, RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
                             )
 
                             Text(
-                                text = "AFTER",
-                                color = Color(0xFFFFD54F).copy(alpha = 0.8f),
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold,
+                                text = "DEPOIS",
+                                color = Amber400,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
                                     .padding(8.dp)
-                                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                                    .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(6.dp))
+                                    .border(0.5.dp, BorderAmber, RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
                     } else {
                         CircularProgressIndicator(color = Color(0xFFFFD54F))
                     }
+
+                    // Zoom Reset Pill Badge
+                    if (previewScale > 1.05f) {
+                        Surface(
+                            onClick = {
+                                previewScale = 1f
+                                previewPanOffset = Offset.Zero
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color.Black.copy(alpha = 0.75f),
+                            border = BorderStroke(1.dp, Color(0xFFFFD54F).copy(alpha = 0.8f)),
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = String.format(java.util.Locale.US, "%.1fx", previewScale),
+                                    color = Color(0xFFFFD54F),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "• Reset",
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    // Botão Flutuante de Alternância Tela Cheia
+                    IconButton(
+                        onClick = { isFullscreenPreview = !isFullscreenPreview },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(8.dp)
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.6f))
+                            .border(0.5.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = if (isFullscreenPreview) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen),
+                            contentDescription = if (isFullscreenPreview) "Sair da Tela Cheia" else "Tela Cheia",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
 
             // Barra de Ferramentas / Sliders e Filtros
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .background(Color.Black.copy(alpha = 0.9f))
-                    .padding(bottom = 12.dp, top = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            AnimatedVisibility(
+                visible = !isFullscreenPreview,
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
             ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.9f))
+                        .navigationBarsPadding()
+                        .padding(bottom = 6.dp, top = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                 val availableTabs = remember(isVideo) {
                     if (isVideo) {
                         listOf("Filtros", "Ajustes", "Retrô", "Recortar/Girar")
                     } else {
-                        listOf("Filtros", "Ajustes", "Curvas", "HSL", "Retrô", "Texto", "Stickers", "Tilt-Shift", "Recortar/Girar")
+                        listOf("Filtros", "Ajustes", "Curvas", "HSL", "Retrô", "Texto", "Stickers", "Tilt-Shift", "IA", "Recortar/Girar")
                     }
                 }
                 val safeTab = selectedTab.coerceIn(0, availableTabs.size - 1)
 
-                // Seletor de Abas Deslizável (ScrollableTabRow)
-                ScrollableTabRow(
-                    selectedTabIndex = safeTab,
-                    containerColor = Color.Transparent,
-                    contentColor = Color(0xFFFFD54F),
-                    edgePadding = 16.dp,
-                    indicator = { tabPositions ->
-                        if (safeTab < tabPositions.size) {
-                            TabRowDefaults.SecondaryIndicator(
-                                modifier = Modifier.tabIndicatorOffset(tabPositions[safeTab]),
-                                color = Color(0xFFFFD54F)
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                // Seletor de Abas Redesenhado (LazyRow com PremiumChip & Badges)
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    availableTabs.forEachIndexed { index, tabName ->
-                        Tab(
-                            selected = safeTab == index,
-                            onClick = { selectedTab = index },
-                            text = { Text(tabName, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                    items(availableTabs.size) { index ->
+                        val tabName = availableTabs[index]
+                        val isSelected = safeTab == index
+                        val isModified = isTabModified(tabName, currentEditState)
+                        val labelText = if (isModified) "$tabName ●" else tabName
+
+                        PremiumChip(
+                            label = labelText,
+                            selected = isSelected,
+                            onClick = { selectedTab = index }
                         )
                     }
                 }
@@ -868,7 +1129,7 @@ fun EditorScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(170.dp),
+                        .height(200.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     when (availableTabs.getOrElse(safeTab) { "Filtros" }) {
@@ -903,7 +1164,7 @@ fun EditorScreen(
                                     contentPadding = PaddingValues(horizontal = 16.dp),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    items(FilterType.values()) { filter ->
+                                    items(FilterType.entries) { filter ->
                                         FilterThumbnailItem(
                                             filter = filter,
                                             isSelected = currentEditState.activeFilter == filter,
@@ -917,7 +1178,7 @@ fun EditorScreen(
                             }
                         }
                         "Ajustes" -> {
-                            // Ajustes Finos (Básicos)
+                            // Ajustes Finos (Básicos) + Histograma RGB
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -925,6 +1186,10 @@ fun EditorScreen(
                                     .padding(horizontal = 16.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
+                                HistogramWidget(
+                                    bitmap = processedPreviewBitmap ?: originalPreviewBitmap,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
                                 AdjustmentSlider(
                                     name = "Brilho",
                                     value = currentEditState.brightness,
@@ -981,6 +1246,31 @@ fun EditorScreen(
                                     valueRange = 0f..100f,
                                     isCentralZero = false
                                 )
+                                if (currentEditState.vignette > 0f) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Forma Vinheta:", color = Color.White.copy(alpha = 0.6f), fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(65.dp))
+                                        PremiumChip(
+                                            label = "Elipse",
+                                            selected = currentEditState.vignetteShape == "ELLIPSE",
+                                            onClick = {
+                                                currentEditState = currentEditState.copy(vignetteShape = "ELLIPSE")
+                                                history.pushState(currentEditState)
+                                            }
+                                        )
+                                        PremiumChip(
+                                            label = "Retângulo",
+                                            selected = currentEditState.vignetteShape == "ROUNDED_RECT",
+                                            onClick = {
+                                                currentEditState = currentEditState.copy(vignetteShape = "ROUNDED_RECT")
+                                                history.pushState(currentEditState)
+                                            }
+                                        )
+                                    }
+                                }
                                 AdjustmentSlider(
                                     name = "Granulação",
                                     value = currentEditState.grain,
@@ -1012,7 +1302,7 @@ fun EditorScreen(
                                 CurvesControlTabRow(
                                     selectedChannel = activeCurveChannel,
                                     onChannelChange = { activeCurveChannel = it },
-                                    modifier = Modifier.padding(bottom = 8.dp)
+                                    modifier = Modifier.padding(bottom = 4.dp)
                                 )
 
                                 CurvesCanvas(
@@ -1039,7 +1329,7 @@ fun EditorScreen(
                                     onDragFinished = {
                                         history.pushState(currentEditState)
                                     },
-                                    modifier = Modifier.height(115.dp)
+                                    modifier = Modifier.height(105.dp)
                                 )
                             }
                         }
@@ -1053,9 +1343,9 @@ fun EditorScreen(
                             ) {
                                 // Seletores de cores HSL
                                 LazyRow(
-                                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                                    contentPadding = PaddingValues(horizontal = 4.dp)
                                 ) {
                                     items(HslColorChannel.values()) { channel ->
                                         val isSelected = selectedHslChannel == channel
@@ -1066,17 +1356,17 @@ fun EditorScreen(
                                         Column(
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                             modifier = Modifier
-                                                .padding(horizontal = 4.dp)
+                                                .padding(horizontal = 2.dp)
                                                 .clickable { selectedHslChannel = channel }
                                         ) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(if (isSelected) 30.dp else 24.dp)
+                                                    .size(if (isSelected) 22.dp else 17.dp)
                                                     .clip(CircleShape)
                                                     .background(channel.color)
                                                     .border(
                                                         BorderStroke(
-                                                            if (isSelected) 2.5.dp else 0.dp,
+                                                            if (isSelected) 2.dp else 0.dp,
                                                             Color.White
                                                         ),
                                                         CircleShape
@@ -1086,12 +1376,12 @@ fun EditorScreen(
                                                 Box(
                                                     modifier = Modifier
                                                         .padding(top = 2.dp)
-                                                        .size(4.dp)
+                                                        .size(3.dp)
                                                         .clip(CircleShape)
                                                         .background(Color(0xFFFFD54F))
                                                 )
                                             } else {
-                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Spacer(modifier = Modifier.height(3.dp))
                                             }
                                         }
                                     }
@@ -1281,7 +1571,7 @@ fun EditorScreen(
                         }
                         "Texto" -> {
                             var showTextEntryDialog by remember { mutableStateOf(false) }
-                            var editingTextString by remember { mutableStateOf("Aesthetic Camera") }
+                            var editingTextString by remember { mutableStateOf("PhotoFlow") }
 
                             if (showTextEntryDialog) {
                                 AlertDialog(
@@ -1575,6 +1865,105 @@ fun EditorScreen(
                                 }
                             }
                         }
+                        "IA" -> {
+                            // Aba de Ferramentas de IA On-Device
+                            // isAiApplied: verdadeiro se já houver um filtro IA aplicado no estado atual
+                            val isAiApplied = currentEditState.aiFilterApplied != null
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(horizontal = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Banner informativo quando já há filtro IA ativo
+                                if (isAiApplied) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(Amber400.copy(alpha = 0.12f))
+                                            .border(0.7.dp, Amber400.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            "Filtro IA aplicado: ${currentEditState.aiFilterApplied?.replace('_', ' ')}. Ao aplicar outro, o anterior será substituído.",
+                                            color = Amber400,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+
+                                // Auto-Enhance V2
+                                com.example.aestheticcamera.ui.editor.ai.AIToolCard(
+                                    title = "Auto-Enhance Inteligente",
+                                    subtitle = "Detecta a cena e aplica ajustes otimizados automaticamente",
+                                    isApplied = currentEditState.aiFilterApplied == "AUTO_ENHANCE",
+                                    onClick = {
+                                        sourcePreviewBitmap?.let { bmp ->
+                                            scope.launch {
+                                                val result = withContext(Dispatchers.Default) {
+                                                    com.example.aestheticcamera.ui.editor.ai.AutoEnhanceEngineV2.analyzeAndEnhance(bmp, currentEditState)
+                                                }
+                                                currentEditState = result.enhancedState.copy(aiFilterApplied = "AUTO_ENHANCE")
+                                                history.pushState(currentEditState)
+                                                Toast.makeText(context, "${result.sceneType.displayName} aplicado!", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                )
+
+                                // Style Match
+                                com.example.aestheticcamera.ui.editor.ai.AIToolCard(
+                                    title = "Copiar Estilo de Foto",
+                                    subtitle = "Transfere a atmosfera de cores de uma foto de referência",
+                                    isApplied = currentEditState.aiFilterApplied == "STYLE_MATCH",
+                                    onClick = { aiStyleMatchRequested = true }
+                                )
+
+                                // Retoque Facial
+                                com.example.aestheticcamera.ui.editor.ai.AIToolCard(
+                                    title = "Retoque Facial & Pele Suave",
+                                    subtitle = "Suaviza imperfeições de pele preservando nitidez dos olhos",
+                                    isApplied = currentEditState.aiFilterApplied == "FACE_RETOUCH",
+                                    onClick = {
+                                        sourcePreviewBitmap?.let { bmp ->
+                                            scope.launch {
+                                                val retouched = withContext(Dispatchers.Default) {
+                                                    com.example.aestheticcamera.ui.editor.ai.FaceRetouchEngine.applyFaceRetouch(bmp, 0.6f)
+                                                }
+                                                originalPreviewBitmap = retouched
+                                                currentEditState = currentEditState.copy(aiFilterApplied = "FACE_RETOUCH")
+                                                history.pushState(currentEditState)
+                                                Toast.makeText(context, "Retoque Facial Aplicado!", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                )
+
+                                // Restaurar Foto Antiga
+                                com.example.aestheticcamera.ui.editor.ai.AIToolCard(
+                                    title = "Restaurar Foto Antiga",
+                                    subtitle = "Remove desbotamento e aplica denoise adaptativo.",
+                                    isApplied = currentEditState.aiFilterApplied == "VINTAGE_RESTORE",
+                                    onClick = {
+                                        sourcePreviewBitmap?.let { bmp ->
+                                            scope.launch {
+                                                val restored = withContext(Dispatchers.Default) {
+                                                    com.example.aestheticcamera.ui.editor.ai.VintageRestorationEngine.restorePhoto(bmp)
+                                                }
+                                                originalPreviewBitmap = restored
+                                                currentEditState = currentEditState.copy(aiFilterApplied = "VINTAGE_RESTORE")
+                                                history.pushState(currentEditState)
+                                                Toast.makeText(context, "Foto Restaurada!", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
                         "Recortar/Girar" -> {
                             // Aba de Recortar e Girar
                             Column(
@@ -1634,33 +2023,9 @@ fun EditorScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Botão de Salvar final
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = { showExportDialog = true },
-                        colors = ButtonColors(
-                            containerColor = Color(0xFFFFD54F),
-                            contentColor = Color.Black,
-                            disabledContainerColor = Color.Gray,
-                            disabledContentColor = Color.DarkGray
-                        ),
-                        enabled = !isSaving,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        if (isSaving) {
-                            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.Black, strokeWidth = 2.dp)
-                        } else {
-                            Text("Salvar na Galeria 💾", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
+                // Fim da Barra de Ferramentas (o salvamento oficial é acionado pelo botão principal Salvar na TopBar)
             }
+        }
         }
 
         if (showExportDialog) {
@@ -1767,7 +2132,8 @@ fun EditorScreen(
                                 watermarkEnabled = wmark,
                                 textOverlays = currentEditState.textOverlays,
                                 stickerOverlays = currentEditState.stickerOverlays,
-                                tiltShiftConfig = currentEditState.tiltShiftConfig
+                                tiltShiftConfig = currentEditState.tiltShiftConfig,
+                                vignetteShape = currentEditState.vignetteShape
                             )
                             isSaving = false
                             if (success) {
@@ -1780,10 +2146,22 @@ fun EditorScreen(
                     }
                 }
             )
+        if (showPresetSheet) {
+            PresetBottomSheet(
+                currentState = currentEditState,
+                onApplyPreset = { newPresetState ->
+                    currentEditState = newPresetState
+                    history.pushState(newPresetState)
+                },
+                onDismiss = { showPresetSheet = false }
+            )
         }
+
     }
 }
+}
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HslAdjustmentSlider(
     name: String,
@@ -1791,10 +2169,13 @@ fun HslAdjustmentSlider(
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: () -> Unit
 ) {
+    val haptics = LocalHapticFeedback.current
+    var lastSign by remember { mutableIntStateOf(value.sign.toInt()) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
+            .padding(vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -1802,11 +2183,27 @@ fun HslAdjustmentSlider(
             color = Color.White.copy(alpha = 0.6f),
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(65.dp)
+            modifier = Modifier
+                .width(62.dp)
+                .combinedClickable(
+                    onClick = {},
+                    onDoubleClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onValueChange(0f)
+                        onValueChangeFinished()
+                    }
+                )
         )
         Slider(
             value = value,
-            onValueChange = onValueChange,
+            onValueChange = { newVal ->
+                val currentSign = newVal.sign.toInt()
+                if (currentSign != lastSign && (lastSign != 0 || currentSign != 0)) {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                }
+                lastSign = currentSign
+                onValueChange(newVal)
+            },
             onValueChangeFinished = onValueChangeFinished,
             valueRange = -100f..100f,
             colors = SliderDefaults.colors(
@@ -1821,7 +2218,16 @@ fun HslAdjustmentSlider(
             color = if (value.toInt() != 0) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.4f),
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(30.dp),
+            modifier = Modifier
+                .width(32.dp)
+                .combinedClickable(
+                    onClick = {},
+                    onDoubleClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onValueChange(0f)
+                        onValueChangeFinished()
+                    }
+                ),
             textAlign = TextAlign.Center
         )
     }
@@ -1840,7 +2246,8 @@ private suspend fun applyImagePipeline(
     lightLeakOpacity: Float = 0f,
     dateStampEnabled: Boolean = false,
     frameStyle: Int = 0,
-    tiltShiftConfig: com.example.aestheticcamera.ui.editor.model.TiltShiftConfig = com.example.aestheticcamera.ui.editor.model.TiltShiftConfig()
+    tiltShiftConfig: com.example.aestheticcamera.ui.editor.model.TiltShiftConfig = com.example.aestheticcamera.ui.editor.model.TiltShiftConfig(),
+    vignetteShape: String = "ELLIPSE"
 ): Bitmap = withContext(Dispatchers.Default) {
     val width = src.width
     val height = src.height
@@ -2027,17 +2434,32 @@ private suspend fun applyImagePipeline(
     if (vignette > 0f) {
         val w = dest.width.toFloat()
         val h = dest.height.toFloat()
-        val radius = maxOf(w, h) * 0.8f
         val vignetteCanvas = android.graphics.Canvas(dest)
         val vignettePaint = android.graphics.Paint()
-        val gradient = android.graphics.RadialGradient(
-            w / 2f, h / 2f, radius,
-            intArrayOf(android.graphics.Color.TRANSPARENT, android.graphics.Color.argb(((vignette / 100f) * 0.85f * 255f).toInt(), 0, 0, 0)),
-            floatArrayOf(0.4f, 1.0f),
-            android.graphics.Shader.TileMode.CLAMP
-        )
-        vignettePaint.shader = gradient
-        vignetteCanvas.drawRect(0f, 0f, w, h, vignettePaint)
+        val alphaVal = ((vignette / 100f) * 0.85f * 255f).toInt().coerceIn(0, 255)
+
+        if (vignetteShape == "ROUNDED_RECT") {
+            val marginX = w * 0.08f
+            val marginY = h * 0.08f
+            val shader = android.graphics.RadialGradient(
+                w / 2f, h / 2f, maxOf(w, h) * 0.75f,
+                intArrayOf(android.graphics.Color.TRANSPARENT, android.graphics.Color.argb(alphaVal, 0, 0, 0)),
+                floatArrayOf(0.6f, 1.0f),
+                android.graphics.Shader.TileMode.CLAMP
+            )
+            vignettePaint.shader = shader
+            vignetteCanvas.drawRect(0f, 0f, w, h, vignettePaint)
+        } else {
+            val radius = maxOf(w, h) * 0.8f
+            val gradient = android.graphics.RadialGradient(
+                w / 2f, h / 2f, radius,
+                intArrayOf(android.graphics.Color.TRANSPARENT, android.graphics.Color.argb(alphaVal, 0, 0, 0)),
+                floatArrayOf(0.4f, 1.0f),
+                android.graphics.Shader.TileMode.CLAMP
+            )
+            vignettePaint.shader = gradient
+            vignetteCanvas.drawRect(0f, 0f, w, h, vignettePaint)
+        }
     }
 
     // 5. Granulação
@@ -2365,7 +2787,8 @@ private suspend fun saveEditedImage(
     watermarkEnabled: Boolean = true,
     textOverlays: List<com.example.aestheticcamera.ui.editor.model.TextOverlayItem> = emptyList(),
     stickerOverlays: List<com.example.aestheticcamera.ui.editor.model.StickerOverlayItem> = emptyList(),
-    tiltShiftConfig: com.example.aestheticcamera.ui.editor.model.TiltShiftConfig = com.example.aestheticcamera.ui.editor.model.TiltShiftConfig()
+    tiltShiftConfig: com.example.aestheticcamera.ui.editor.model.TiltShiftConfig = com.example.aestheticcamera.ui.editor.model.TiltShiftConfig(),
+    vignetteShape: String = "ELLIPSE"
 ): Boolean = withContext(Dispatchers.IO) {
     try {
         val resolver = context.contentResolver
@@ -2395,7 +2818,8 @@ private suspend fun saveEditedImage(
             lightLeakOpacity = lightLeakOpacity,
             dateStampEnabled = dateStampEnabled,
             frameStyle = frameStyle,
-            tiltShiftConfig = tiltShiftConfig
+            tiltShiftConfig = tiltShiftConfig,
+            vignetteShape = vignetteShape
         )
 
         // Limpar bitmap temporário se foi criado um novo para corte
@@ -2469,7 +2893,7 @@ private suspend fun saveEditedImage(
                 isFakeBoldText = true
                 setShadowLayer(4f, 2f, 2f, android.graphics.Color.BLACK)
             }
-            val watermarkText = "📷 AESTHETIC CAMERA"
+            val watermarkText = "📷 PHOTOFLOW"
             val margin = destBitmap.width * 0.035f
             val x = destBitmap.width - textPaint.measureText(watermarkText) - margin
             val y = destBitmap.height - margin
@@ -2499,6 +2923,45 @@ private suspend fun saveEditedImage(
             resolver.openOutputStream(outUri)?.use { out ->
                 destBitmap.compress(compressFormat, exportQuality.coerceIn(70, 100), out)
             }
+
+            // Preservação de Metadados EXIF da imagem original
+            try {
+                if (ext == "jpg" || ext == "jpeg") {
+                    resolver.openFileDescriptor(outUri, "rw")?.use { pfd ->
+                        val destExif = android.media.ExifInterface(pfd.fileDescriptor)
+                        resolver.openInputStream(sourceUri)?.use { inStream ->
+                            val srcExif = android.media.ExifInterface(inStream)
+                            val tagsToCopy = listOf(
+                                android.media.ExifInterface.TAG_DATETIME,
+                                android.media.ExifInterface.TAG_MAKE,
+                                android.media.ExifInterface.TAG_MODEL,
+                                android.media.ExifInterface.TAG_FOCAL_LENGTH,
+                                android.media.ExifInterface.TAG_FLASH,
+                                android.media.ExifInterface.TAG_WHITE_BALANCE,
+                                android.media.ExifInterface.TAG_GPS_LATITUDE,
+                                android.media.ExifInterface.TAG_GPS_LATITUDE_REF,
+                                android.media.ExifInterface.TAG_GPS_LONGITUDE,
+                                android.media.ExifInterface.TAG_GPS_LONGITUDE_REF,
+                                android.media.ExifInterface.TAG_GPS_ALTITUDE,
+                                android.media.ExifInterface.TAG_GPS_ALTITUDE_REF,
+                                android.media.ExifInterface.TAG_GPS_TIMESTAMP,
+                                android.media.ExifInterface.TAG_GPS_DATESTAMP
+                            )
+                            for (tag in tagsToCopy) {
+                                val value = srcExif.getAttribute(tag)
+                                if (value != null) {
+                                    destExif.setAttribute(tag, value)
+                                }
+                            }
+                            destExif.setAttribute(android.media.ExifInterface.TAG_SOFTWARE, "PhotoFlow Pro")
+                            destExif.saveAttributes()
+                        }
+                    }
+                }
+            } catch (exifErr: Exception) {
+                Log.e("EditorScreen", "Erro ao copiar dados EXIF", exifErr)
+            }
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 contentValues.clear()
                 contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -2508,7 +2971,7 @@ private suspend fun saveEditedImage(
             return@withContext true
         }
     } catch (e: Exception) {
-        e.printStackTrace()
+        Log.e("EditorScreen", "Erro ao salvar imagem editada", e)
     }
     return@withContext false
 }
@@ -2644,7 +3107,7 @@ class LeftSplitShape(private val splitFraction: Float) : Shape {
     }
 }
 
-// Componente: Slider de Ajuste Estilizado
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AdjustmentSlider(
     name: String,
@@ -2654,6 +3117,10 @@ fun AdjustmentSlider(
     valueRange: ClosedFloatingPointRange<Float>,
     isCentralZero: Boolean = true
 ) {
+    val haptics = LocalHapticFeedback.current
+    var lastSign by remember { mutableIntStateOf(value.sign.toInt()) }
+    val defaultValue = if (isCentralZero) 0f else valueRange.start
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2672,7 +3139,15 @@ fun AdjustmentSlider(
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
+                letterSpacing = 1.sp,
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onDoubleClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onValueChange(defaultValue)
+                        onValueChangeFinished()
+                    }
+                )
             )
             val percentValue = value.toInt()
             val formattedValue = if (isCentralZero && percentValue > 0) "+$percentValue%" else "$percentValue%"
@@ -2680,7 +3155,15 @@ fun AdjustmentSlider(
                 text = formattedValue,
                 color = if (percentValue != 0) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.4f),
                 fontSize = 11.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onDoubleClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onValueChange(defaultValue)
+                        onValueChangeFinished()
+                    }
+                )
             )
         }
 
@@ -2689,7 +3172,16 @@ fun AdjustmentSlider(
         Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Slider(
                 value = value,
-                onValueChange = onValueChange,
+                onValueChange = { newVal ->
+                    if (isCentralZero) {
+                        val currentSign = newVal.sign.toInt()
+                        if (currentSign != lastSign && (lastSign != 0 || currentSign != 0)) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        lastSign = currentSign
+                    }
+                    onValueChange(newVal)
+                },
                 onValueChangeFinished = onValueChangeFinished,
                 valueRange = valueRange,
                 colors = SliderDefaults.colors(
@@ -2740,7 +3232,7 @@ private fun saveImageToGallery(context: Context, bitmap: Bitmap): Uri? {
         android.media.MediaScannerConnection.scanFile(context, arrayOf(uri.path ?: ""), arrayOf("image/jpeg"), null)
         return uri
     } catch (e: Exception) {
-        e.printStackTrace()
+        Log.e("EditorScreen", "Erro ao salvar foto para exportação", e)
         resolver.delete(uri, null, null)
         return null
     }
@@ -2883,7 +3375,7 @@ fun GrainVideoOverlay(
         val w = size.width
         val h = size.height
         val step = 4f
-        val random = java.util.Random(42)
+        val random = java.util.Random()
 
         var y = 0f
         while (y < h) {
@@ -2908,8 +3400,12 @@ fun GrainVideoOverlay(
 fun RetroDateStampVideoOverlay(
     modifier: Modifier = Modifier
 ) {
+    val dateText = remember {
+        val sdf = java.text.SimpleDateFormat("''yy  MM  dd", java.util.Locale.US)
+        sdf.format(java.util.Date())
+    }
     Text(
-        text = "'26  07  20",
+        text = dateText,
         color = Color(0xFFFF8C00),
         fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
@@ -2924,7 +3420,7 @@ fun RetroDateStampVideoOverlay(
 fun ExportOptionsDialog(
     initialFormat: String = "JPEG",
     initialQuality: Float = 90f,
-    initialWatermark: Boolean = true,
+    initialWatermark: Boolean = false,
     onDismiss: () -> Unit,
     onConfirmExport: (format: String, quality: Float, watermark: Boolean) -> Unit
 ) {
@@ -2937,7 +3433,12 @@ fun ExportOptionsDialog(
         containerColor = Color(0xFF1E1E1E),
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("⚙️", fontSize = 18.sp)
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_settings),
+                    contentDescription = null,
+                    tint = Amber400,
+                    modifier = Modifier.size(20.dp)
+                )
                 Text(
                     "Opções de Exportação",
                     color = Color.White,
@@ -3064,4 +3565,28 @@ fun ExportOptionsDialog(
         }
     )
 }
+
+// ─── Helper de alteração em abas para Badges ────────────────────────────────
+private fun isTabModified(tabName: String, state: EditState): Boolean {
+    fun List<PointF>.isDefault(): Boolean {
+        return size == 2 && this[0].x == 0f && this[0].y == 0f && this[1].x == 1f && this[1].y == 1f
+    }
+
+    return when (tabName) {
+        "Filtros" -> state.activeFilter != com.example.aestheticcamera.ui.camera.FilterType.ORIGINAL || state.filterIntensity != 1.0f
+        "Ajustes" -> state.brightness != 0f || state.contrast != 0f || state.saturation != 0f || state.warmth != 0f || state.highlights != 0f || state.shadows != 0f
+        "Curvas" -> !state.rgbCurve.isDefault() ||
+                   !state.redCurve.isDefault() ||
+                   !state.greenCurve.isDefault() ||
+                   !state.blueCurve.isDefault()
+        "HSL" -> state.hslAdjustments.values.any { it.hue != 0f || it.saturation != 0f || it.lightness != 0f }
+        "Retrô" -> state.vignette != 0f || state.grain != 0f || state.sharpness != 0f || state.lightLeakStyle != 0 || state.frameStyle != 0 || state.dateStampEnabled || state.lightLeakOpacity > 0f
+        "Texto" -> state.textOverlays.isNotEmpty()
+        "Stickers" -> state.stickerOverlays.isNotEmpty()
+        "Tilt-Shift" -> state.tiltShiftConfig.mode != com.example.aestheticcamera.ui.editor.model.TiltShiftMode.NONE
+        "Recortar/Girar" -> state.rotationAngle != 0f || state.selectedCropRatio != CropRatio.FREE
+        else -> false
+    }
+}
+
 

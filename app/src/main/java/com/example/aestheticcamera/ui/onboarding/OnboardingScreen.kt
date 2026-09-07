@@ -1,13 +1,12 @@
 package com.example.aestheticcamera.ui.onboarding
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
@@ -15,14 +14,14 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -30,6 +29,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.aestheticcamera.R
+import com.example.aestheticcamera.theme.*
+import com.example.aestheticcamera.ui.components.AnimatedScreen
+import com.example.aestheticcamera.ui.components.SpringButton
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -40,21 +43,39 @@ fun OnboardingScreen(
 ) {
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState(pageCount = { 3 })
-    
+
+    // Animação de entrada do logo
+    var logoVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(100); logoVisible = true }
+
+    val logoScale by animateFloatAsState(
+        targetValue = if (logoVisible) 1f else 0.7f,
+        animationSpec = spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium),
+        label = "logoScale"
+    )
+    val logoAlpha by animateFloatAsState(
+        targetValue = if (logoVisible) 1f else 0f,
+        animationSpec = tween(500),
+        label = "logoAlpha"
+    )
+
     val slides = listOf(
         OnboardingSlide(
-            title = "Por que minhas fotos não ficam assim?",
+            emoji = "📸",
+            title = "Por que minhas fotos\nnão ficam assim?",
             description = "Descubra a arte de capturar imagens estéticas com tonalidades quentes e sombras cinematográficas que contam uma história.",
             imageRes = R.drawable.onboarding_1
         ),
         OnboardingSlide(
-            title = "Componha como os profissionais",
-            description = "Use os guias clássicos — como a Regra dos Terços, Espiral Áurea e Linhas Simétricas — para enquadrar perfeitamente cada momento.",
+            emoji = "🎯",
+            title = "Componha como\nos profissionais",
+            description = "Use guias clássicos — Regra dos Terços, Espiral Áurea e Linhas Simétricas — para enquadrar perfeitamente cada momento.",
             imageRes = R.drawable.onboarding_2
         ),
         OnboardingSlide(
-            title = "Finalize com alma analógica",
-            description = "Aplique filtros retrô inspiradores e ajustes de nível profissional (grão, nitidez, vinheta) para dar personalidade às suas fotos.",
+            emoji = "✨",
+            title = "Finalize com\nalma analógica",
+            description = "Aplique filtros retrô e ajustes de nível profissional (grão, nitidez, vinheta) para dar personalidade única às suas fotos.",
             imageRes = R.drawable.onboarding_3
         )
     )
@@ -63,12 +84,16 @@ fun OnboardingScreen(
         modifier = modifier
             .fillMaxSize()
             .background(
-                Brush.verticalGradient(
-                    colors = listOf(Color(0xFF0D0D0D), Color(0xFF1C1C1E))
+                Brush.radialGradient(
+                    colors = listOf(
+                        Amber400.copy(alpha = 0.04f),
+                        Surface0
+                    ),
+                    radius = 1200f
                 )
             )
     ) {
-        // Top Bar: App Name & Skip Button
+        // ── Top Bar ───────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -77,38 +102,52 @@ fun OnboardingScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "YoungPhoto",
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.5).sp
-            )
-            
+            // Logo animado
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .scale(logoScale)
+                    .graphicsLayer { alpha = logoAlpha }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Brush.linearGradient(listOf(Amber400, Amber600))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("P", color = Surface0, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                }
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    text = "PhotoFlow",
+                    color = TextPrimary,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.5).sp
+                )
+            }
+
             if (pagerState.currentPage < 2) {
                 Text(
                     text = "Pular",
-                    color = Color.White.copy(alpha = 0.5f),
+                    color = TextTertiary,
                     fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            scope.launch {
-                                pagerState.animateScrollToPage(2)
-                            }
-                        }
+                        .clickable { scope.launch { pagerState.animateScrollToPage(2) } }
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 )
             }
         }
 
-        // Pager Content
+        // ── Pager ─────────────────────────────────────────────────────
         HorizontalPager(
             state = pagerState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = 80.dp, bottom = 120.dp)
+                .padding(top = 88.dp, bottom = 128.dp)
         ) { page ->
             val slide = slides[page]
             Column(
@@ -118,122 +157,143 @@ fun OnboardingScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                // Card de Imagem Estética
+                // Imagem
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .padding(bottom = 28.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                    shape = RoundedCornerShape(28.dp),
+                    colors = CardDefaults.cardColors(containerColor = Surface2),
+                    border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderMid)
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         Image(
-                            painter = painterResource(id = slide.imageRes),
+                            painter = painterResource(slide.imageRes),
                             contentDescription = slide.title,
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop
                         )
-                        // Gradiente inferior para legibilidade
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .background(
                                     Brush.verticalGradient(
-                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f))
+                                        0f   to Color.Transparent,
+                                        0.6f to Color.Black.copy(alpha = 0.3f),
+                                        1f   to Color.Black.copy(alpha = 0.75f)
                                     )
                                 )
                         )
+                        // Emoji badge
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(20.dp)
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Surface0.copy(alpha = 0.7f))
+                                .border(0.7.dp, BorderMid, RoundedCornerShape(14.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(slide.emoji, fontSize = 22.sp)
+                        }
                     }
                 }
 
-                // Textos
+                // Título e descrição
                 Text(
                     text = slide.title,
-                    color = Color.White,
+                    color = TextPrimary,
                     fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center,
-                    lineHeight = 32.sp,
-                    modifier = Modifier.padding(bottom = 12.dp)
+                    lineHeight = 31.sp,
+                    letterSpacing = (-0.4).sp,
+                    modifier = Modifier.padding(bottom = 10.dp)
                 )
                 Text(
                     text = slide.description,
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = TextSecondary,
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
-                    lineHeight = 22.sp,
-                    modifier = Modifier.padding(horizontal = 12.dp)
+                    lineHeight = 21.sp,
+                    modifier = Modifier.padding(horizontal = 8.dp)
                 )
             }
         }
 
-        // Bottom Controls
-        Row(
+        // ── Bottom Controls ───────────────────────────────────────────
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = 24.dp, vertical = 32.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 24.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Page Indicators (Capsule style)
+            // Indicadores de página (cápsulas)
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 repeat(3) { index ->
                     val isSelected = pagerState.currentPage == index
-                    val width = animateDpAsState(
-                        targetValue = if (isSelected) 18.dp else 6.dp,
-                        label = "indicatorWidth"
+                    val width by animateDpAsState(
+                        targetValue = if (isSelected) 22.dp else 6.dp,
+                        animationSpec = spring(Spring.DampingRatioMediumBouncy),
+                        label = "dot_$index"
                     )
-                    val alpha = animateFloatAsState(
+                    val alpha by animateFloatAsState(
                         targetValue = if (isSelected) 1f else 0.3f,
-                        label = "indicatorAlpha"
+                        label = "dotAlpha_$index"
                     )
                     Box(
                         modifier = Modifier
+                            .padding(horizontal = 3.dp)
                             .height(6.dp)
-                            .width(width.value)
+                            .width(width)
                             .clip(CircleShape)
-                            .background(Color(0xFFFFD54F).copy(alpha = alpha.value))
+                            .background(Amber400.copy(alpha = alpha))
                     )
                 }
             }
 
-            // Action Button
+            // Botão de ação
             val isLastPage = pagerState.currentPage == 2
-            Button(
+            SpringButton(
                 onClick = {
-                    if (isLastPage) {
-                        onFinishOnboarding()
-                    } else {
-                        scope.launch {
-                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                        }
-                    }
+                    if (isLastPage) onFinishOnboarding()
+                    else scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
                 },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFFFD54F),
-                    contentColor = Color.Black
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = if (isLastPage) "Começar agora" else "Avançar",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Brush.horizontalGradient(listOf(Amber400, Amber600)))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(18.dp))
+                        .padding(vertical = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isLastPage) "✨ Começar agora" else "Avançar →",
+                        color = Surface0,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 16.sp,
+                        letterSpacing = (-0.2).sp
+                    )
+                }
             }
         }
     }
 }
 
 data class OnboardingSlide(
+    val emoji: String,
     val title: String,
     val description: String,
     val imageRes: Int

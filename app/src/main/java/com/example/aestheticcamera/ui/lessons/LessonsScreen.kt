@@ -14,13 +14,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.aestheticcamera.theme.*
 import com.example.aestheticcamera.ui.camera.GuideType
 
 data class Lesson(
     val title: String,
     val guideType: GuideType,
     val description: String,
-    val tip: String
+    val tip: String,
+    val difficulty: String = "Iniciante"
 )
 
 val lessonsList = listOf(
@@ -28,25 +30,29 @@ val lessonsList = listOf(
         title = "Regra dos Terços",
         guideType = GuideType.THIRDS,
         description = "Divida o quadro em uma grade de 3x3 e posicione os elementos mais importantes nas interseções das linhas ou ao longo delas. Isso cria mais equilíbrio e interesse do que simplesmente centralizar o sujeito.",
-        tip = "Dica: Ao tirar fotos de pessoas, tente posicionar os olhos do sujeito em uma das duas interseções superiores."
+        tip = "Dica: Ao tirar fotos de pessoas, tente posicionar os olhos do sujeito em uma das duas interseções superiores.",
+        difficulty = "Iniciante"
     ),
     Lesson(
         title = "Espiral Áurea",
         guideType = GuideType.GOLDEN,
         description = "Baseada na Proporção Áurea (Fibonacci), esta espiral guia o olhar do espectador de forma fluida e natural através do quadro. Ideal para fotos de paisagens, arquitetura ou retratos artísticos com espaço negativo.",
-        tip = "Dica: Posicione o ponto focal da sua foto (como o assunto principal) no menor círculo da espiral."
+        tip = "Dica: Posicione o ponto focal da sua foto (como o assunto principal) no menor círculo da espiral.",
+        difficulty = "Intermediário"
     ),
     Lesson(
         title = "Simetria Central",
         guideType = GuideType.SYMMETRY,
         description = "Divida a imagem exatamente ao meio (vertical ou horizontalmente). A simetria cria imagens marcantes, formais e organizadas. Funciona muito bem com reflexos na água, estradas vazias e fachadas de prédios.",
-        tip = "Dica: Certifique-se de manter o celular perfeitamente alinhado. Até mesmo pequenos desvios podem estragar o efeito simétrico."
+        tip = "Dica: Certifique-se de manter o celular perfeitamente alinhado. Até mesmo pequenos desvios podem estragar o efeito simétrico.",
+        difficulty = "Intermediário"
     ),
     Lesson(
         title = "Silhueta & Enquadramento de Retrato",
         guideType = GuideType.SILHOUETTE,
         description = "Use o contorno do corpo humano para criar profundidade e destaque. Posicionar o sujeito alinhado com a silhueta permite ajustar as luzes de fundo e obter retratos estéticos sem esforço.",
-        tip = "Dica: Prefira fotos contra a luz (backlight) no pôr do sol para destacar as silhuetas de forma dramática."
+        tip = "Dica: Prefira fotos contra a luz (backlight) no pôr do sol para destacar as silhuetas de forma dramática.",
+        difficulty = "Avançado"
     )
 )
 
@@ -74,7 +80,7 @@ fun LessonsScreen(
                 )
             )
         },
-        containerColor = Color(0xFF121212)
+        containerColor = Surface0
     ) { paddingValues ->
         LazyColumn(
             modifier = Modifier
@@ -135,7 +141,7 @@ fun LessonCard(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "Fase 1",
+                        text = lesson.difficulty,
                         color = Color(0xFFFFD54F),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
