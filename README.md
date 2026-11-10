@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/screenshots/onboarding_1.png" alt="PhotoFlow Banner" width="100%"/>
+<img src="docs/screenshots/splash.png" alt="PhotoFlow Splash Screen" width="260"/>
 
 # 📸 PhotoFlow
 
@@ -28,9 +28,10 @@ PhotoFlow is a fully-featured Android camera and photo editing application, desi
 
 <div align="center">
 
-| Onboarding | Features | Tips & Lessons |
+| Home | Camera | Photo Editor |
 |:---:|:---:|:---:|
-| <img src="docs/screenshots/onboarding_2.png" width="200"/> | <img src="docs/screenshots/onboarding_3.png" width="200"/> | <img src="docs/screenshots/tip_of_the_day.png" width="200"/> |
+| <img src="docs/screenshots/home.jpg" width="220"/> | <img src="docs/screenshots/camera.jpg" width="220"/> | <img src="docs/screenshots/editor.jpg" width="220"/> |
+| *Dashboard com dica do dia e ações rápidas* | *Preview ao vivo com filtro Vintage Warm* | *Editor Retrô com light leaks e molduras* |
 
 </div>
 
@@ -182,3 +183,4 @@ Made with ❤️ by [Juan Silva](https://github.com/JuanSsilva07)
 ⭐ If you found this project interesting, consider giving it a star!
 
 </div>
+
